@@ -1,0 +1,38 @@
+# Variáveis de ambiente e credenciais
+.env
+.env.*
+*.key
+*.pem
+credentials.json
+service-account*.json
+token.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+
+# Jupyter / Colab
+.ipynb_checkpoints/
+
+# Documentos e dados reais (nunca versionar conteúdo sensível)
+*.docx
+*.doc
+data/raw/
+data/private/
+base_conhecimento*.json
+relatorio_conteudos_extensos*.pdf
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/

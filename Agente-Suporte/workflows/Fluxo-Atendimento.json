@@ -1,0 +1,462 @@
+{
+  "name": "IA - Indexação Google Docs -> Supabase pgvector",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Fluxo de atendimento (runtime)\n\nRoda a cada mensagem recebida no WhatsApp.\n\n1. Recebe texto ou áudio\n2. Transcreve áudio (se houver)\n3. Busca contexto no Supabase (pgvector)\n4. Agente responde com o contexto encontrado, ou avisa que não sabe\n5. Envia resposta pelo WhatsApp\n\nO conteúdo do Google Docs é indexado por um workflow separado, agendado — veja \"n8n-indexacao-google-docs.json\".",
+        "height": 404,
+        "width": 380
+      },
+      "id": "d8b07f03-6a12-4796-9beb-36e638250193",
+      "name": "Nota - Como funciona",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1008,
+        384
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "messages"
+        ],
+        "options": {}
+      },
+      "id": "4f132f57-27e6-4850-82cd-09d682b003d3",
+      "name": "1. WhatsApp Trigger",
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        672
+      ],
+      "webhookId": "SUBSTITUIR-PELO-SEU-WEBHOOK-ID"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-audio",
+              "leftValue": "={{ $json.messages[0].type }}",
+              "rightValue": "audio",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "919d2151-ad36-4b05-abda-27d4ac87d46f",
+      "name": "2. Tem áudio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -144,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v19.0/{{ $json.messages[0].audio.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "20243a56-fc93-4203-bc07-2ffc5b1e7895",
+      "name": "3a. Baixar áudio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -32,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-pergunta-texto",
+              "name": "pergunta",
+              "type": "string",
+              "value": "={{ $json.messages[0].text.body }}"
+            },
+            {
+              "id": "set-telefone",
+              "name": "telefone",
+              "type": "string",
+              "value": "={{ $json.messages[0].from }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4b8cfea5-a198-4b76-8b56-da51c2971369",
+      "name": "3c. Extrair texto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        304,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-pergunta-audio",
+              "name": "pergunta",
+              "type": "string",
+              "value": "={{ $json.text }}"
+            },
+            {
+              "id": "set-telefone-audio",
+              "name": "telefone",
+              "type": "string",
+              "value": "={{ $('1. WhatsApp Trigger').item.json.messages[0].from }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a5a825fa-93ae-4bfb-8a62-b427c3de9c3c",
+      "name": "3d. Normalizar campo pergunta",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        528,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "value": "text-embedding-3-small"
+        },
+        "options": {}
+      },
+      "id": "41a15893-d2f4-4bb6-b931-8c98d1f0fe61",
+      "name": "Embeddings para busca",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        688,
+        912
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "load",
+        "tableName": "documents",
+        "prompt": "={{ $json.pergunta }}",
+        "options": {}
+      },
+      "id": "75f6fa9b-52b5-451a-a8ba-1c9060a9ad20",
+      "name": "4. Buscar no Supabase",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        704,
+        688
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "fnpg1irlra6qgmxK",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Avalia os resultados da busca vetorial e monta o contexto para o agente.\n// Ajuste o LIMIAR conforme os testes com sua base (0.75 é um bom ponto de partida\n// para embeddings text-embedding-3-small com distância de cosseno).\nconst LIMIAR_SIMILARIDADE = 0.75;\n\nconst resultados = items.map(item => item.json);\n\nconst relevantes = resultados.filter(r => (r.score ?? r.similarity ?? 0) >= LIMIAR_SIMILARIDADE);\n\nconst contexto = relevantes\n  .map(r => r.pageContent || r.content || '')\n  .join('\\n\\n---\\n\\n');\n\nreturn [{\n  json: {\n    pergunta: $('4. Buscar no Supabase').item.json.pergunta || items[0]?.json?.pergunta,\n    telefone: $input.first().json.telefone,\n    contexto,\n    encontrouContexto: relevantes.length > 0\n  }\n}];"
+      },
+      "id": "c78b35d9-17b4-4089-a1e8-4718c87231e5",
+      "name": "5. Avaliar resultados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "id": "c843ee32-d32f-47a7-b00c-f56e9c4e4906",
+      "name": "Modelo de LLM",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1248,
+        928
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.pergunta }}",
+        "options": {
+          "systemMessage": "=Você é um assistente de suporte que responde perguntas do usuário usando SOMENTE o contexto abaixo, extraído da base de conhecimento da empresa.\n\nContexto encontrado (pode estar vazio):\n{{ $json.contexto }}\n\nRegras:\n- Se o contexto responder à pergunta, responda de forma clara e completa usando essas informações.\n- Se o contexto estiver vazio ou não tiver relação com a pergunta, diga honestamente que não encontrou essa informação na base de conhecimento e sugira que o usuário reformule a pergunta ou fale com um atendente humano.\n- Nunca invente informações que não estejam no contexto."
+        }
+      },
+      "id": "209aa905-f922-464f-ae27-4909e3058e80",
+      "name": "6. Agente de IA",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.9,
+      "position": [
+        1248,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "SUBSTITUIR-PHONE-NUMBER-ID",
+        "recipientPhoneNumber": "={{ $('5. Avaliar resultados').item.json.telefone }}",
+        "textBody": "={{ $json.output }}",
+        "additionalFields": {}
+      },
+      "id": "7a4c0b05-e5df-4a10-b589-229d83d542dc",
+      "name": "7. Enviar resposta",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [
+        1632,
+        688
+      ],
+      "webhookId": "7f96a310-6f2f-4f4f-8f53-739c7b89cd9e"
+    },
+    {
+      "parameters": {
+        "resource": "audio",
+        "operation": "transcribe",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        192,
+        400
+      ],
+      "id": "c1a46b31-c926-431d-bf67-091105b2fd3d",
+      "name": "Transcribe a recording"
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.4,
+      "position": [
+        1344,
+        912
+      ],
+      "id": "d741afa6-81a9-4f91-98af-9c5d442794d0",
+      "name": "Postgres Chat Memory"
+    },
+    {
+      "parameters": {
+        "operation": "get"
+      },
+      "type": "n8n-nodes-base.googleDocsTool",
+      "typeVersion": 2,
+      "position": [
+        1536,
+        928
+      ],
+      "id": "516bc5e5-2506-4ba6-b4ff-fd5d69e70178",
+      "name": "Get a document in Google Docs",
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "t20Y2rQyL8SDFfmX",
+          "name": "Google Docs account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "1. WhatsApp Trigger": {
+      "main": [
+        [
+          {
+            "node": "2. Tem áudio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Tem áudio?": {
+      "main": [
+        [
+          {
+            "node": "3a. Baixar áudio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "3c. Extrair texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3c. Extrair texto": {
+      "main": [
+        [
+          {
+            "node": "3d. Normalizar campo pergunta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3d. Normalizar campo pergunta": {
+      "main": [
+        [
+          {
+            "node": "4. Buscar no Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings para busca": {
+      "ai_embedding": [
+        [
+          {
+            "node": "4. Buscar no Supabase",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Buscar no Supabase": {
+      "main": [
+        [
+          {
+            "node": "5. Avaliar resultados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Avaliar resultados": {
+      "main": [
+        [
+          {
+            "node": "6. Agente de IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo de LLM": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "6. Agente de IA",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Agente de IA": {
+      "main": [
+        [
+          {
+            "node": "7. Enviar resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe a recording": {
+      "main": [
+        [
+          {
+            "node": "3c. Extrair texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3a. Baixar áudio": {
+      "main": [
+        [
+          {
+            "node": "Transcribe a recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "6. Agente de IA",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get a document in Google Docs": {
+      "ai_tool": [
+        [
+          {
+            "node": "6. Agente de IA",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "d8e6579e-8214-43e4-92bf-b83975263230",
+  "meta": {
+    "instanceId": "81aad5b97a0ccdaf3dd8dcd6a1aa045f6a640668f9d9008c57bd4f4f3072f95d"
+  },
+  "nodeGroups": [],
+  "id": "ip9iFA8mms6q9kxK",
+  "tags": []
+}

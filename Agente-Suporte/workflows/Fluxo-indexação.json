@@ -1,0 +1,301 @@
+{
+  "name": "IA - Indexação Google Docs -> Supabase pgvector",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Fluxo de indexação (agendado)\n\nRoda periodicamente (ex: 1x por dia), NÃO a cada pergunta do usuário.\n\n1. Lista os documentos da pasta do Google Drive\n2. Para cada documento: baixa, converte, quebra em chunks e gera embeddings\n3. Faz upsert no Supabase (mesma tabela usada no atendimento)\n\nO upsert usa google_doc_id + chunk_index como chave, então rodar de novo atualiza\nos chunks existentes em vez de duplicar registros.\n\nVeja o SQL de setup da tabela no README.",
+        "height": 436,
+        "width": 400
+      },
+      "id": "4abab881-9ada-4622-a7b5-7aa6d61519cc",
+      "name": "Nota - Como funciona1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        256,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "documents",
+        "options": {
+          "queryName": "match_documents"
+        }
+      },
+      "id": "8c382cbf-1c82-44cd-8f56-616e4e458ac7",
+      "name": "7. Upsert no Supabase",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1.3,
+      "position": [
+        2416,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "value": "text-embedding-3-small"
+        },
+        "options": {}
+      },
+      "id": "cd04ba09-d1d4-4eab-b0ff-be8672d3b33c",
+      "name": "Embeddings para indexação",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        2384,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.conteudo }}",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "google_doc_id",
+                "value": "={{ $json.googleDocId }}"
+              },
+              {
+                "name": "titulo",
+                "value": "={{ $json.titulo }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "0f0bcb04-62e3-4a6e-b3cc-75687adbc174",
+      "name": "6. Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [
+        2512,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "chunkOverlap": 150,
+        "options": {}
+      },
+      "id": "2fa517d5-44ff-45f6-9ff6-4e010b7e5589",
+      "name": "Text Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        2592,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrai o texto do binário baixado e monta metadados estáveis para o upsert.\nconst binary = items[0].binary?.data;\nif (!binary) {\n  return [];\n}\nconst texto = Buffer.from(binary.data, 'base64').toString('utf-8');\n\nreturn [{\n  json: {\n    googleDocId: items[0].json.id,\n    titulo: items[0].json.name,\n    conteudo: texto\n  }\n}];"
+      },
+      "id": "6118fc36-6485-4a36-868a-765436d8450a",
+      "name": "5. Preparar conteúdo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain"
+            }
+          }
+        }
+      },
+      "id": "446a6901-0643-4005-953d-87b17d9a385e",
+      "name": "4. Baixar e converter",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1936,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "4158c582-3f9c-456c-98b2-1066a37c0e49",
+      "name": "3. Processar 1 por vez",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1712,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "filter": {
+          "folderId": {
+            "value": "SUBSTITUIR-ID-DA-PASTA-GOOGLE-DRIVE",
+            "mode": "id"
+          }
+        },
+        "options": {}
+      },
+      "id": "d302a4ff-ce99-4f44-9e62-33f43a30f2d5",
+      "name": "2. Listar documentos",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1488,
+        720
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 3
+            }
+          ]
+        }
+      },
+      "id": "cdad8294-a28b-44a8-9936-a83ba1c216b4",
+      "name": "1. Trigger agendado",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1264,
+        720
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "7. Upsert no Supabase": {
+      "main": [
+        [
+          {
+            "node": "3. Processar 1 por vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings para indexação": {
+      "ai_embedding": [
+        [
+          {
+            "node": "7. Upsert no Supabase",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "6. Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "7. Upsert no Supabase",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "6. Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5. Preparar conteúdo": {
+      "main": [
+        [
+          {
+            "node": "7. Upsert no Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "4. Baixar e converter": {
+      "main": [
+        [
+          {
+            "node": "5. Preparar conteúdo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "3. Processar 1 por vez": {
+      "main": [
+        [],
+        [
+          {
+            "node": "4. Baixar e converter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "2. Listar documentos": {
+      "main": [
+        [
+          {
+            "node": "3. Processar 1 por vez",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1. Trigger agendado": {
+      "main": [
+        [
+          {
+            "node": "2. Listar documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "affa5945-5b39-4582-a85c-69f8493d212f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "81aad5b97a0ccdaf3dd8dcd6a1aa045f6a640668f9d9008c57bd4f4f3072f95d"
+  },
+  "nodeGroups": [],
+  "id": "ip9iFA8mms6q9kxK",
+  "tags": []
+}
